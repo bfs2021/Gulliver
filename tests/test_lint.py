@@ -19,6 +19,29 @@ def test_select_star_and_unbounded_output():
     assert r["GV002"] == "warn"
 
 
+def test_exists_subquery_star_is_not_a_scan():
+    for dialect in ("duckdb", "postgres"):
+        sql = "select u.id from users u where exists (select * from orders o where o.user_id = u.id) limit 10"
+        assert "GV001" not in rules(sql, dialect), dialect
+        not_exists = sql.replace("exists", "not exists")
+        assert "GV001" not in rules(not_exists, dialect), dialect
+
+
+def test_star_after_an_exists_subquery_is_still_found():
+    derived = ("select u.id from users u where exists (select * from orders o where o.user_id = u.id) "
+               "and u.id in (select * from ids) limit 10")
+    assert rules(derived)["GV001"] == "warn"
+    nested = ("select u.id from users u where exists (select * from orders o where o.user_id = u.id) "
+              "and exists (select 1 from flags f where f.user_id = u.id) limit 10")
+    assert "GV001" not in rules(nested)
+
+
+def test_plain_and_derived_table_star_still_warn():
+    assert rules("select * from users limit 10")["GV001"] == "warn"
+    assert rules("select id from (select * from users) t limit 10")["GV001"] == "warn"
+    assert rules("select * from users limit 10", "postgres")["GV001"] == "warn"
+
+
 def test_limit_removes_unbounded_warning():
     assert "GV002" not in rules("select id from events limit 10")
 

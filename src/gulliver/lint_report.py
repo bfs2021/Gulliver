@@ -28,7 +28,8 @@ INFO_URI = "https://github.com/laaielichter/Gulliver"
 
 # id -> (default severity, what it means, how to fix, autofix)
 RULE_DOCS: dict[str, tuple[str, str, str, str]] = {
-    "GV001": ("warn", "SELECT * reads every column; columnar engines charge and work per column.",
+    "GV001": ("warn", "SELECT * reads every column; columnar engines charge and work per column. An EXISTS "
+                      "subquery is skipped: it is a semi-join, no engine reads its columns.",
               "List only the columns you need.", "none"),
     "GV002": ("warn", "The outer query has no LIMIT and no aggregation, so it can return every row.",
               "Add a LIMIT for exploration, or aggregate before returning rows.", "mode=all (changes the result)"),

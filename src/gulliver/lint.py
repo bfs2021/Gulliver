@@ -104,8 +104,11 @@ def lint(statement_tree: exp.Expression, dialect: str = "duckdb",
 
     outer = _outer_select(tree)
 
-    # GV001 select-star (only where it reaches the output or a scan; COUNT(*) is fine)
+    # GV001 select-star (only where it reaches the output or a scan; COUNT(*) is fine;
+    # an EXISTS subquery is a semi-join, no engine reads its columns)
     for select in tree.find_all(exp.Select):
+        if select.find_ancestor(exp.Exists) is not None:
+            continue
         stars = [p for p in select.expressions if _is_star_projection(p)]
         if stars:
             add("GV001", "warn",
