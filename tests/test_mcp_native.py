@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -471,15 +472,19 @@ def test_structured_content_matches_output_schema(demo_db, state, monkeypatch):
 
 
 def test_stdio_elicitation_and_progress(demo_db, state, tmp_path):
-    """The same over a real gulliver-mcp subprocess (JSON-RPC on stdio). DuckDB costs $0, so a negative
-    auto-approve limit makes every run need approval."""
+    """The same over a real gulliver-mcp subprocess (JSON-RPC on stdio). DuckDB costs $0, so a spend already
+    over the velocity limit makes the run need a human's approval."""
     from mcp import StdioServerParameters
 
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "ledger.jsonl").write_text(json.dumps({
+        "at": datetime.now(timezone.utc).isoformat(), "kind": "run", "agent": "stdio-test", "cost_usd": 5.0}) + "\n")
     config = tmp_path / "stdio.toml"
     config.write_text(f"[connections.local]\nengine = 'duckdb'\npath = '{demo_db}'\n"
-                      "[budget]\napproval_over_usd = -1.0\n[approval]\nchannel = 'elicitation'\n")
+                      "[budget]\napproval_over_usd = 1.0\nvelocity_usd = 2.0\n[approval]\nchannel = 'elicitation'\n")
     src = str(Path(__file__).resolve().parent.parent / "src")
-    env = {**os.environ, "PYTHONPATH": src + os.pathsep + os.environ.get("PYTHONPATH", ""), "GULLIVER_HOME": str(state)}
+    env = {**os.environ, "PYTHONPATH": src + os.pathsep + os.environ.get("PYTHONPATH", ""),
+           "GULLIVER_HOME": str(state), "GULLIVER_AGENT": "stdio-test"}
     params = StdioServerParameters(command=sys.executable, args=["-m", "gulliver.mcp_server", "--config", str(config),
                                                                  "--toolset", "core"], env=env)
     callback, asked = _answer("accept", {"approve": True, "note": "stdio"})
@@ -496,7 +501,8 @@ def test_stdio_elicitation_and_progress(demo_db, state, tmp_path):
 
     run, reh = asyncio.run(go())
     assert len(asked) == 1, run
-    assert run["status"] == "ok" and run["approval"]["channel"] == "elicitation"
+    approvals = _approvals(state)
+    assert run["status"] == "ok" and [a.get("channel") for a in approvals] == ["elicitation"]
     assert reh["status"] in ("ok", "warn") and progress == [1, 2, 3]
 
 
