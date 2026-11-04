@@ -64,3 +64,54 @@ def test_example_config_loads(monkeypatch):
     assert s.connection("bq").engine == "bigquery"
     assert s.connection("pg").engine == "postgres"
     assert s.budget.max_query_usd == 1.0
+
+
+def _write_budget(tmp_path, body):
+    (tmp_path / "gulliver.toml").write_text("[budget]\n" + body)
+
+
+def test_non_finite_budget_from_toml(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    for body in ("max_query_usd = nan\n", "day_usd = inf\n", "max_bytes = inf\n", "max_runtime_s = -inf\n"):
+        _write_budget(tmp_path, body)
+        with pytest.raises(ConfigError) as excinfo:
+            load_settings()
+        key = body.split(" = ")[0]
+        assert key in str(excinfo.value)
+
+
+def test_non_finite_budget_from_env(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    for env_key, key, value in (("GULLIVER_MAX_QUERY_USD", "max_query_usd", "nan"),
+                                ("GULLIVER_DAY_USD", "day_usd", "inf"),
+                                ("GULLIVER_MAX_BYTES", "max_bytes", "-inf"),
+                                ("GULLIVER_REPEAT_WINDOW_MIN", "repeat_window_min", "nan")):
+        monkeypatch.setenv(env_key, value)
+        with pytest.raises(ConfigError) as excinfo:
+            load_settings()
+        assert key in str(excinfo.value)
+        monkeypatch.delenv(env_key)
+
+
+def test_negative_budget_rejected_and_zero_allowed(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    for body in ("max_query_usd = -1\n", "max_output_rows = -1\n", "agent_day_usd = -5\n"):
+        _write_budget(tmp_path, body)
+        with pytest.raises(ConfigError) as excinfo:
+            load_settings()
+        assert body.split(" = ")[0] in str(excinfo.value)
+
+    _write_budget(tmp_path, "max_output_rows = 0\nsession_usd = 0\nagent_day_usd = 0\n")
+    s = load_settings()
+    assert s.budget.max_output_rows == 0
+    assert s.budget.session_usd == 0
+    assert s.budget.agent_day_usd == {"default": 0}
+
+
+def test_non_finite_agent_day_usd_table(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    for body in ('agent_day_usd = {default = nan}\n', 'agent_day_usd = {default = 5, "claude-code" = -1}\n'):
+        _write_budget(tmp_path, body)
+        with pytest.raises(ConfigError) as excinfo:
+            load_settings()
+        assert "agent_day_usd" in str(excinfo.value)

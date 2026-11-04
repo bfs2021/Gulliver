@@ -12,6 +12,7 @@ environment variables or default credential chains (for example Google ADC).
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
@@ -84,18 +85,38 @@ _ENV_BUDGET = {
 def _agent_limits(value: Any) -> dict[str, float]:
     """agent_day_usd = 5 (every agent) or a table {default = 5, "claude-code" = 10}."""
     items = value.items() if isinstance(value, dict) else [("default", value)]
-    try:
-        return {str(k): float(v) for k, v in items}
-    except (TypeError, ValueError) as exc:
-        raise ConfigError(f"Budget value agent_day_usd={value!r} must be a number or a table of numbers") from exc
+    limits: dict[str, float] = {}
+    for name, limit in items:
+        try:
+            number = float(limit)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(
+                f"Budget value agent_day_usd={value!r} must be a number or a table of numbers"
+            ) from exc
+        limits[str(name)] = _check_limit(f"agent_day_usd[{name!r}]", limit, number)
+    return limits
+
+
+def _check_limit(key: str, raw: Any, number: float) -> float:
+    if not math.isfinite(number):
+        raise ConfigError(f"Budget value {key}={raw!r} must be finite, not NaN or infinity")
+    if number < 0:
+        raise ConfigError(f"Budget value {key}={raw!r} must not be negative; use 0 to switch a limit off")
+    return number
 
 
 def _coerce(cls: type, key: str, value: Any) -> Any:
     default = getattr(cls, key)
     try:
-        return type(default)(value)
-    except (TypeError, ValueError) as exc:
+        coerced = type(default)(value)
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ConfigError(f"Budget value {key}={value!r} is not a valid {type(default).__name__}") from exc
+    if isinstance(coerced, int):
+        if coerced < 0:
+            raise ConfigError(f"Budget value {key}={value!r} must not be negative; use 0 to switch a limit off")
+    else:
+        _check_limit(key, value, coerced)
+    return coerced
 
 
 @dataclass(frozen=True)
